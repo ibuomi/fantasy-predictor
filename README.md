@@ -6,7 +6,8 @@ Predicts fantasy football points for the upcoming Premier League gameweek, using
 1. Pulls every player's stats and the upcoming gameweek's fixtures from the FPL API
 2. Combines each player's season-long output (points per game) with their recent form and how hard their next fixture is, into a predicted-points score
 3. **Also predicts match scores, corners, and yellow cards** for the same fixtures, using historical results from a second, independent data source (football-data.co.uk)
-4. Serves it all through a REST API and a React dashboard with two tabs: Fantasy Points and Match Predictions
+4. Shows real official Premier League team crests throughout the UI
+5. Serves it all through a REST API and a React dashboard with two tabs: Fantasy Points and Match Predictions
 
 ## Two data sources, two separate models
 This app deliberately pulls from **two unrelated data sources** and runs **two separate prediction models**, not one model doing everything:
@@ -19,33 +20,53 @@ This app deliberately pulls from **two unrelated data sources** and runs **two s
 
 They're joined together only at the very end, through the *fixture list* — both models predict outcomes for the same upcoming gameweek's matches, just using completely different inputs.
 
+## Team crests: real, official — and deliberately not scraped
+Team badges throughout the UI come from the Premier League's own public image CDN (`resources.premierleague.com`), built from a `code` field the FPL API already returns per team.
+
+**What this app does *not* do:** scrape the official Premier League app or website directly. The app doesn't expose a stable public API — what most hobby projects hitting it are actually calling is an undocumented internal endpoint (`footballapi.pulselive.com`) that isn't meant for outside use and can change or start blocking requests with no notice. Rather than build something on that foundation, this app gets real official assets (crests) through data it already has a legitimate, stable source for, and sticks to `football-data.co.uk` (a long-standing, widely-used free dataset) for historical stats. If you want richer official data later (live scores, standings), that would mean taking on the pulselive endpoint's instability deliberately — worth deciding with eyes open rather than defaulting into it.
+
 ## Stack
 - **Backend:** Python, Flask, Flask-SQLAlchemy, SQLite, `requests`
 - **Frontend:** React (Vite), Recharts
 
 ## Setup
 
-### Backend
+### The easy way: one command
+```bash
+./start.sh        # Mac/Linux
+```
+```powershell
+.\start.ps1       # Windows (PowerShell)
+```
+This creates the Python virtual environment, installs both backend and frontend dependencies, builds the frontend, and starts the server — all in one go, one process, one port. Re-running it is safe (it skips steps already done) and rebuilds the frontend each time, so it picks up any frontend code changes automatically.
+
+Once it's running, open **`http://localhost:5000`** — the UI and the API are both served from that single address, no second terminal window needed.
+
+If PowerShell blocks the script from running:
+```powershell
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+```
+
+### The manual way (if you want to understand or customize each step)
 ```bash
 cd backend
 python -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
 pip install -r requirements.txt
+
+cd ../frontend
+npm install
+npm run build
+
+cd ../backend
 python run.py
 ```
-Runs at `http://localhost:5000`. No API key needed — the FPL endpoint is public.
+No API key needed anywhere — both the FPL API and football-data.co.uk are public.
 
-### Frontend
-In a second terminal:
-```bash
-cd frontend
-npm install
-npm run dev
-```
-Runs at `http://localhost:5173` and proxies `/api` requests to the Flask backend (see `vite.config.js`).
+**Editing the frontend?** Run `npm run dev` in `frontend/` instead of `npm run build` for hot-reload during development (serves at `http://localhost:5173`, proxying `/api` to the Flask backend — see `vite.config.js`). Switch back to `npm run build` (or just re-run `start.sh`/`start.ps1`) when you're done, so Flask serves the latest version again.
 
 ### First run
-Open the app and go to the **Fantasy Points** tab, click **"Refresh data"** — this pulls the latest players/fixtures from the FPL API and generates fantasy-point predictions.
+Open the app (`http://localhost:5000`) and go to the **Fantasy Points** tab, click **"Refresh data"** — this pulls the latest players/fixtures from the FPL API and generates fantasy-point predictions.
 
 Then switch to the **Match Predictions** tab: click **"Load historical data"** once (downloads a season of past Premier League results from football-data.co.uk — a few hundred KB, takes a couple seconds), then **"Refresh fixtures"** to pull the upcoming gameweek's matchups. Predicted scores, corners, and cards will appear for each fixture.
 
@@ -64,8 +85,8 @@ Then switch to the **Match Predictions** tab: click **"Load historical data"** o
 cd backend
 pytest tests/ -v
 ```
-37 tests across seven files, split cleanly along the two data pipelines:
-- `test_fpl_client.py`, `test_prediction.py`, `test_ingestion.py`, `test_routes.py` — the fantasy-points pipeline
+39 tests across eight files, split cleanly along the two data pipelines:
+- `test_fpl_client.py`, `test_prediction.py`, `test_ingestion.py`, `test_routes.py`, `test_team_crest.py` — the fantasy-points pipeline (crests are sourced from the FPL data, so they're tested alongside it)
 - `test_match_data_client.py`, `test_team_stats.py`, `test_match_prediction.py`, `test_match_routes.py` — the match-predictions pipeline
 
 Both external data sources (the FPL API and football-data.co.uk) are mocked in every test using realistic sample response data, so the suite is fast, deterministic, and doesn't depend on live data or the season currently being active.
@@ -98,6 +119,7 @@ All three are deliberately simple:
 - **Refresh is idempotent** for both pipelines. Re-running `/api/refresh` or `/api/refresh-matches` doesn't create duplicate rows — players/fixtures are upserted by FPL id, matches are keyed on `(date, home_team, away_team)`, and fantasy predictions for a gameweek are deleted and regenerated each time.
 - **Both external clients are isolated from Flask** (`fpl_client.py` and `match_data_client.py` have zero Flask imports), which is what makes it possible to unit-test all the parsing logic completely separately from the web layer.
 - **No historical archive of predictions.** The database holds a rolling snapshot, not every gameweek's predictions all season — keeping the schema small. Tracking predicted-vs-actual accuracy over time is a natural next feature.
+- **Single-process serving.** Flask serves the built React app (`frontend/dist`) directly at `/`, alongside the API at `/api/*`, in one process on one port (see `create_app()`'s catch-all route in `app/__init__.py`). This is why `start.sh`/`start.ps1` only need to run one server, not two — the separate `npm run dev` server is purely a development convenience for hot-reload, not something the app depends on at runtime.
 
 ## Possible extensions
 - Track predicted vs. actual results after each gameweek to report real accuracy (MAE for goals, corners; a confusion matrix for match outcome)

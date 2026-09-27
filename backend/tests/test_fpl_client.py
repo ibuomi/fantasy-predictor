@@ -18,7 +18,7 @@ def test_get_current_or_next_gameweek_falls_back_to_current():
 
 def test_build_team_lookup():
     lookup = build_team_lookup(FAKE_BOOTSTRAP)
-    assert lookup == {1: "Arsenal", 2: "Chelsea"}
+    assert lookup == {1: {"name": "Arsenal", "code": 3}, 2: {"name": "Chelsea", "code": 8}}
 
 
 def test_parse_players_converts_cost_and_numeric_strings():
@@ -27,6 +27,7 @@ def test_parse_players_converts_cost_and_numeric_strings():
     havertz = next(p for p in players if p["id"] == 101)
 
     assert havertz["team_name"] == "Arsenal"
+    assert havertz["team_code"] == 3
     assert havertz["position"] == "FWD"
     assert havertz["now_cost"] == 7.8  # 78 tenths -> 7.8 million
     assert havertz["form"] == 6.2       # string "6.2" -> float

@@ -48,20 +48,26 @@ def get_current_or_next_gameweek(bootstrap_data: dict) -> int:
 
 
 def build_team_lookup(bootstrap_data: dict) -> dict:
-    """Maps FPL's numeric team id -> team name, e.g. {1: 'Arsenal', ...}."""
-    return {team["id"]: team["name"] for team in bootstrap_data.get("teams", [])}
+    """Maps FPL's numeric team id -> {name, code}. 'code' is a separate id
+    FPL uses for image assets (crests) — not the same as 'id'."""
+    return {
+        team["id"]: {"name": team["name"], "code": team.get("code")}
+        for team in bootstrap_data.get("teams", [])
+    }
 
 
 def parse_players(bootstrap_data: dict, team_lookup: dict) -> list[dict]:
     """Turns FPL's raw 'elements' list into the fields our Player model needs."""
     players = []
     for el in bootstrap_data.get("elements", []):
+        team = team_lookup.get(el["team"], {})
         players.append({
             "id": el["id"],
             "first_name": el.get("first_name", ""),
             "second_name": el.get("second_name", ""),
             "team_id": el["team"],
-            "team_name": team_lookup.get(el["team"], "Unknown"),
+            "team_name": team.get("name", "Unknown"),
+            "team_code": team.get("code"),
             "position": POSITION_MAP.get(el.get("element_type"), "UNK"),
             "now_cost": el.get("now_cost", 0) / 10,  # FPL stores cost as tenths of a million
             "total_points": el.get("total_points", 0),
@@ -81,13 +87,17 @@ def parse_fixtures(raw_fixtures: list[dict], team_lookup: dict) -> list[dict]:
     for fx in raw_fixtures:
         if fx.get("event") is None:
             continue
+        home = team_lookup.get(fx["team_h"], {})
+        away = team_lookup.get(fx["team_a"], {})
         fixtures.append({
             "id": fx["id"],
             "gameweek": fx["event"],
             "team_h_id": fx["team_h"],
             "team_a_id": fx["team_a"],
-            "team_h_name": team_lookup.get(fx["team_h"], "Unknown"),
-            "team_a_name": team_lookup.get(fx["team_a"], "Unknown"),
+            "team_h_name": home.get("name", "Unknown"),
+            "team_a_name": away.get("name", "Unknown"),
+            "team_h_code": home.get("code"),
+            "team_a_code": away.get("code"),
             "team_h_difficulty": fx.get("team_h_difficulty", 3),
             "team_a_difficulty": fx.get("team_a_difficulty", 3),
             "kickoff_time": fx.get("kickoff_time"),

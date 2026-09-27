@@ -5,6 +5,7 @@ from .ingestion import refresh_all_data, refresh_historical_matches
 from .fpl_client import FPLClientError
 from .match_data_client import MatchDataError
 from .match_prediction import predict_match
+from .team_crest import crest_url
 
 bp = Blueprint("main", __name__)
 
@@ -114,5 +115,10 @@ def match_predictions():
         gameweek = first_fixture.gameweek
 
     fixtures = Fixture.query.filter_by(gameweek=gameweek).all()
-    predictions = [predict_match(fx.team_h_name, fx.team_a_name) for fx in fixtures]
+    predictions = []
+    for fx in fixtures:
+        pred = predict_match(fx.team_h_name, fx.team_a_name)
+        pred["home_crest"] = crest_url(fx.team_h_code)
+        pred["away_crest"] = crest_url(fx.team_a_code)
+        predictions.append(pred)
     return jsonify(predictions)

@@ -4,8 +4,8 @@ FAKE_BOOTSTRAP = {
         {"id": 6, "is_current": False, "is_next": True},
     ],
     "teams": [
-        {"id": 1, "name": "Arsenal"},
-        {"id": 2, "name": "Chelsea"},
+        {"id": 1, "name": "Arsenal", "code": 3},
+        {"id": 2, "name": "Chelsea", "code": 8},
     ],
     "elements": [
         {

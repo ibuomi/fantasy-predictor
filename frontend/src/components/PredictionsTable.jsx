@@ -24,7 +24,12 @@ export default function PredictionsTable({ predictions }) {
         {predictions.map((p) => (
           <tr key={p.id}>
             <td>{p.player_name}</td>
-            <td>{p.team}</td>
+            <td>
+              <span className="team-cell">
+                {p.team_crest && <img src={p.team_crest} alt="" className="crest" />}
+                {p.team}
+              </span>
+            </td>
             <td><span className={`badge ${p.position}`}>{p.position}</span></td>
             <td>{p.opponent_team}</td>
             <td>{p.fixture_difficulty}</td>

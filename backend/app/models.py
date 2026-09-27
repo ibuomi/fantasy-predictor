@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from . import db
+from .team_crest import crest_url
 
 POSITION_MAP = {1: "GK", 2: "DEF", 3: "MID", 4: "FWD"}
 
@@ -12,6 +13,7 @@ class Player(db.Model):
     second_name = db.Column(db.String(100), nullable=False)
     team_name = db.Column(db.String(100), nullable=False)
     team_id = db.Column(db.Integer, nullable=False)
+    team_code = db.Column(db.Integer)  # used to build the official crest image URL
     position = db.Column(db.String(10), nullable=False)  # GK/DEF/MID/FWD
     now_cost = db.Column(db.Float, nullable=False)  # in millions, e.g. 8.5
     total_points = db.Column(db.Integer, default=0)
@@ -26,6 +28,7 @@ class Player(db.Model):
             "id": self.id,
             "name": f"{self.first_name} {self.second_name}",
             "team": self.team_name,
+            "team_crest": crest_url(self.team_code),
             "position": self.position,
             "now_cost": self.now_cost,
             "total_points": self.total_points,
@@ -45,6 +48,8 @@ class Fixture(db.Model):
     team_a_id = db.Column(db.Integer, nullable=False)
     team_h_name = db.Column(db.String(100), nullable=False)
     team_a_name = db.Column(db.String(100), nullable=False)
+    team_h_code = db.Column(db.Integer)
+    team_a_code = db.Column(db.Integer)
     team_h_difficulty = db.Column(db.Integer, nullable=False)  # FPL's 1 (easy) - 5 (hard) rating
     team_a_difficulty = db.Column(db.Integer, nullable=False)
     kickoff_time = db.Column(db.String(50))
@@ -55,6 +60,8 @@ class Fixture(db.Model):
             "gameweek": self.gameweek,
             "home_team": self.team_h_name,
             "away_team": self.team_a_name,
+            "home_crest": crest_url(self.team_h_code),
+            "away_crest": crest_url(self.team_a_code),
             "home_difficulty": self.team_h_difficulty,
             "away_difficulty": self.team_a_difficulty,
             "kickoff_time": self.kickoff_time,
@@ -104,6 +111,7 @@ class Prediction(db.Model):
             "player_id": self.player_id,
             "player_name": f"{self.player.first_name} {self.player.second_name}" if self.player else None,
             "team": self.player.team_name if self.player else None,
+            "team_crest": crest_url(self.player.team_code) if self.player else None,
             "position": self.player.position if self.player else None,
             "gameweek": self.gameweek,
             "predicted_points": self.predicted_points,
