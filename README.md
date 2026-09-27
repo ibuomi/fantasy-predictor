@@ -6,8 +6,13 @@ Predicts fantasy football points for the upcoming Premier League gameweek, using
 1. Pulls every player's stats and the upcoming gameweek's fixtures from the FPL API
 2. Combines each player's season-long output (points per game) with their recent form and how hard their next fixture is, into a predicted-points score
 3. **Also predicts match scores, corners, and yellow cards** for the same fixtures, using historical results from a second, independent data source (football-data.co.uk)
-4. Shows real official Premier League team crests throughout the UI
-5. Serves it all through a REST API and a React dashboard with two tabs: Fantasy Points and Match Predictions
+4. Reports **win/draw/away probabilities and the top 3 likely scorelines** for each fixture, via a real Poisson model — not just one guessed score
+5. Lets you **backtest** the match model against every historical match already loaded, for real accuracy numbers without waiting for future gameweeks
+6. Can **train a real regression model** on your historical data and use it instead of the heuristic — but only if it actually measurably beats the heuristic first
+7. Shows **head-to-head history and recent form** for both teams in a fixture
+8. Has a **"My Team" mode** — paste your real FPL team ID and see fantasy predictions filtered to just your squad, with your captain's points doubled
+9. Shows real official Premier League team crests throughout the UI
+10. Serves it all through a REST API and a React dashboard with three tabs: Fantasy Points, Match Predictions, and My Team
 
 ## Two data sources, two separate models
 This app deliberately pulls from **two unrelated data sources** and runs **two separate prediction models**, not one model doing everything:
@@ -26,8 +31,10 @@ Team badges throughout the UI come from the Premier League's own public image CD
 **What this app does *not* do:** scrape the official Premier League app or website directly. The app doesn't expose a stable public API — what most hobby projects hitting it are actually calling is an undocumented internal endpoint (`footballapi.pulselive.com`) that isn't meant for outside use and can change or start blocking requests with no notice. Rather than build something on that foundation, this app gets real official assets (crests) through data it already has a legitimate, stable source for, and sticks to `football-data.co.uk` (a long-standing, widely-used free dataset) for historical stats. If you want richer official data later (live scores, standings), that would mean taking on the pulselive endpoint's instability deliberately — worth deciding with eyes open rather than defaulting into it.
 
 ## Stack
-- **Backend:** Python, Flask, Flask-SQLAlchemy, SQLite, `requests`
+- **Backend:** Python, Flask, Flask-SQLAlchemy, SQLite, `requests`, `scipy` (Poisson model), `scikit-learn` + `joblib` (optional trained model)
 - **Frontend:** React (Vite), Recharts
+- **CI:** GitHub Actions (`.github/workflows/tests.yml`) — runs the full backend test suite and a frontend build on every push
+- **Deployment:** Dockerfile + `docker-compose.yml` + a Render Blueprint (`render.yaml`)
 
 ## Setup
 
@@ -78,18 +85,41 @@ Then switch to the **Match Predictions** tab: click **"Load historical data"** o
 | `/api/predictions` | GET | List fantasy-point predictions. Query params: `gameweek`, `position`, `limit` |
 | `/api/fixtures` | GET | List fixtures. Query param: `gameweek` |
 | `/api/refresh-matches` | POST | Downloads a season of historical match stats. Query params: `season` (e.g. `2425`), `division` (default `E0`) |
-| `/api/match-predictions` | GET | Predicted score/corners/cards per fixture. Query param: `gameweek` |
+| `/api/match-predictions` | GET | Predicted score/corners/cards + win/draw/away odds + likely scorelines per fixture. Query param: `gameweek` |
+| `/api/head-to-head` | GET | Recent meetings between two teams. Query params: `team_a`, `team_b` (both required), `limit` |
+| `/api/team-form` | GET | A team's last N results. Query params: `team` (required), `limit` |
+| `/api/backtest` | GET | Walk-forward accuracy of the match model against all stored historical matches |
+| `/api/my-team` | GET | Fantasy predictions filtered to one manager's squad. Query params: `entry_id` (required — your FPL team ID), `gameweek` |
+
+## Backtesting: real accuracy, without waiting for future gameweeks
+`/api/backtest` (and the "Run backtest" button on the Match Predictions tab) walks through every historical match already loaded, in chronological order, and — for each one — predicts it using *only the data that would genuinely have been available before it was played*, then compares that prediction to what actually happened. This is a standard walk-forward / expanding-window backtest, and it's the single most valuable feature for actually knowing whether the model works, rather than just asserting it does.
+
+It reports: matches evaluated, goals/corners/cards MAE (home and away separately), and outcome accuracy (win/draw/loss correctness). The more seasons of historical data you've loaded via `/api/refresh-matches`, the more matches get evaluated.
+
+## Optional: training a real model instead of the heuristic
+```bash
+cd backend
+python -m app.train_model
+```
+This trains a gradient-boosted regression model (scikit-learn) to predict match goals, using the same walk-forward features as the backtest — then evaluates it against the heuristic **on the same held-out matches**, so the comparison is apples-to-apples. It only saves the trained model (to `backend/models/`) if it actually beats the heuristic on both home and away goals; otherwise it tells you so and leaves the heuristic in place. If a trained model is present, `match_prediction.py` uses it automatically and every prediction reports `"goals_model_source": "trained"` or `"heuristic"` so you always know which one produced a given number.
+
+**Scope note:** this trains goals only, not corners or cards — corners and cards are noisier signals where the extra model complexity is less likely to earn its keep. That's a documented decision in `train_model.py`'s docstring, not an oversight.
+
+## Deployment
+- **Docker (recommended, works anywhere):**
+  ```bash
+  docker compose up --build
+  ```
+  Builds the frontend and runs the whole app (API + UI) in one container at `http://localhost:5000`. The SQLite database persists across restarts in a named Docker volume.
+- **Render:** the included `render.yaml` is a one-click Blueprint — push this repo to GitHub, then in Render choose "New Blueprint Instance" and point it at the repo. It builds from the same `Dockerfile`.
+- Deploying is the one step in this whole project that genuinely needs your own action (a hosting account) — everything above just makes that step as close to one command as it can be.
 
 ## Running tests
 ```bash
 cd backend
 pytest tests/ -v
 ```
-39 tests across eight files, split cleanly along the two data pipelines:
-- `test_fpl_client.py`, `test_prediction.py`, `test_ingestion.py`, `test_routes.py`, `test_team_crest.py` — the fantasy-points pipeline (crests are sourced from the FPL data, so they're tested alongside it)
-- `test_match_data_client.py`, `test_team_stats.py`, `test_match_prediction.py`, `test_match_routes.py` — the match-predictions pipeline
-
-Both external data sources (the FPL API and football-data.co.uk) are mocked in every test using realistic sample response data, so the suite is fast, deterministic, and doesn't depend on live data or the season currently being active.
+76 tests across sixteen files. Both external data sources (the FPL API and football-data.co.uk) are mocked in every test using realistic sample data, so the suite is fast, deterministic, and doesn't depend on live data or the season currently being active. The trained-model tests use synthetic in-memory data with a deliberately learnable pattern, so they don't depend on you having loaded any real historical seasons.
 
 ## Design notes: the prediction models are heuristics, not trained ML — on purpose
 
@@ -118,12 +148,13 @@ All three are deliberately simple:
 - **Two independent team-naming conventions, bridged explicitly.** FPL and football-data.co.uk don't always agree on team names ("Man Utd" vs "Man United", "Spurs" vs "Tottenham") — `team_name_map.py` translates between them, and is called out in its own docstring as needing a small update each season when a newly promoted club's name doesn't match.
 - **Refresh is idempotent** for both pipelines. Re-running `/api/refresh` or `/api/refresh-matches` doesn't create duplicate rows — players/fixtures are upserted by FPL id, matches are keyed on `(date, home_team, away_team)`, and fantasy predictions for a gameweek are deleted and regenerated each time.
 - **Both external clients are isolated from Flask** (`fpl_client.py` and `match_data_client.py` have zero Flask imports), which is what makes it possible to unit-test all the parsing logic completely separately from the web layer.
-- **No historical archive of predictions.** The database holds a rolling snapshot, not every gameweek's predictions all season — keeping the schema small. Tracking predicted-vs-actual accuracy over time is a natural next feature.
+- **No historical archive of predictions.** The database holds a rolling snapshot, not every gameweek's predictions all season — keeping the schema small. (Backtesting, above, solves the "does this actually work" question a different way — by validating against the past instead of archiving the future.)
 - **Single-process serving.** Flask serves the built React app (`frontend/dist`) directly at `/`, alongside the API at `/api/*`, in one process on one port (see `create_app()`'s catch-all route in `app/__init__.py`). This is why `start.sh`/`start.ps1` only need to run one server, not two — the separate `npm run dev` server is purely a development convenience for hot-reload, not something the app depends on at runtime.
+- **One shared walk-forward feature builder, used twice.** `historical_features.py` computes the exact same engineered features for both the backtest and the model trainer, so a trained model sees identical feature definitions at training time and at prediction time — a subtle but important correctness detail (a model trained on one feature definition and served on a slightly different one would silently produce nonsense).
+- **Dates are normalized at ingestion, not left as-is.** football-data.co.uk gives dates as `DD/MM/YY` strings; sorting those lexicographically does *not* give chronological order across month boundaries (e.g. "05/09/24" sorts before "12/08/24", which is backwards). `match_data_client.py` converts every date to ISO (`YYYY-MM-DD`) on the way in, which is what makes head-to-head history, team form, and the backtest all sort correctly with a plain string comparison.
 
 ## Possible extensions
-- Track predicted vs. actual results after each gameweek to report real accuracy (MAE for goals, corners; a confusion matrix for match outcome)
-- Swap either heuristic for a trained regression model
-- "My team" mode: paste your FPL squad and see fantasy predictions for just your 15 players
 - Referee-level card tendency data, if a source for it can be found, to make the cards model less naive
-- Historical trends per team (last 10 matches) as a form chart
+- Extend the trained-model approach to corners and cards once there's a real dataset (referee assignments, etc.) that would plausibly help
+- Live in-game updates (in-progress match scores) — a materially different, more fragile problem than everything here, since it would mean depending on an undocumented, unstable endpoint rather than the two long-standing free sources this app currently uses
+- A proper production database (Postgres) instead of SQLite, if this ever needs concurrent multi-user writes

@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: fantasy-predictor
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    healthCheckPath: /api/health
+    disk:
+      name: fantasy-data
+      mountPath: /app/backend/data
+      sizeGB: 1

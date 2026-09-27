@@ -6,6 +6,10 @@ from .fpl_client import FPLClientError
 from .match_data_client import MatchDataError
 from .match_prediction import predict_match
 from .team_crest import crest_url
+from .head_to_head import get_head_to_head
+from .team_form import get_team_form
+from .backtest import run_backtest
+from .fpl_team import fetch_entry_picks, parse_picks
 
 bp = Blueprint("main", __name__)
 
@@ -122,3 +126,85 @@ def match_predictions():
         pred["away_crest"] = crest_url(fx.team_a_code)
         predictions.append(pred)
     return jsonify(predictions)
+
+
+@bp.get("/api/head-to-head")
+def head_to_head():
+    """Recent meetings between two teams. Query params: team_a, team_b
+    (required), limit (default 5)."""
+    team_a = request.args.get("team_a")
+    team_b = request.args.get("team_b")
+    if not team_a or not team_b:
+        return jsonify({"error": "team_a and team_b are both required"}), 400
+    limit = request.args.get("limit", 5, type=int)
+    return jsonify(get_head_to_head(team_a, team_b, limit=limit))
+
+
+@bp.get("/api/team-form")
+def team_form():
+    """A team's last N results. Query params: team (required), limit (default 5)."""
+    team = request.args.get("team")
+    if not team:
+        return jsonify({"error": "team is required"}), 400
+    limit = request.args.get("limit", 5, type=int)
+    return jsonify(get_team_form(team, limit=limit))
+
+
+@bp.get("/api/backtest")
+def backtest():
+    """Walk-forward validation of the match prediction model against every
+    historical match currently stored — real accuracy numbers, computed
+    without needing to wait for future gameweeks. See app/backtest.py for
+    the method."""
+    return jsonify(run_backtest())
+
+
+@bp.get("/api/my-team")
+def my_team():
+    """Fantasy-point predictions filtered to one manager's actual squad.
+    Query params: entry_id (required, your FPL team ID — the number in the
+    URL when you view your team on the FPL site), gameweek (defaults to the
+    latest gameweek we have predictions for)."""
+    entry_id = request.args.get("entry_id", type=int)
+    if not entry_id:
+        return jsonify({"error": "entry_id is required"}), 400
+
+    gameweek = request.args.get("gameweek", type=int)
+    if gameweek is None:
+        latest = Prediction.query.order_by(Prediction.gameweek.desc()).first()
+        if latest is None:
+            return jsonify({"error": "No predictions available yet — refresh data first"}), 400
+        gameweek = latest.gameweek
+
+    try:
+        picks_data = fetch_entry_picks(entry_id, gameweek)
+    except FPLClientError as exc:
+        return jsonify({"error": str(exc)}), 502
+
+    picks = parse_picks(picks_data)
+    player_ids = [p["player_id"] for p in picks]
+    captain_id = next((p["player_id"] for p in picks if p["is_captain"]), None)
+
+    predictions = (
+        Prediction.query.filter(Prediction.gameweek == gameweek, Prediction.player_id.in_(player_ids))
+        .order_by(Prediction.predicted_points.desc())
+        .all()
+    )
+
+    results = []
+    total_predicted = 0.0
+    for pred in predictions:
+        entry = pred.to_dict()
+        is_captain = pred.player_id == captain_id
+        entry["is_captain"] = is_captain
+        # Captain's points are doubled in real FPL scoring
+        entry["effective_points"] = entry["predicted_points"] * (2 if is_captain else 1)
+        total_predicted += entry["effective_points"]
+        results.append(entry)
+
+    return jsonify({
+        "entry_id": entry_id,
+        "gameweek": gameweek,
+        "total_predicted_points": round(total_predicted, 2),
+        "players": results,
+    })

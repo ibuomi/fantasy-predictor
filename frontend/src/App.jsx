@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { refreshData, getPredictions } from "./api";
-import { refreshMatches, getMatchPredictions } from "./matchApi";
+import { refreshMatches, getMatchPredictions, getBacktest, getMyTeam } from "./matchApi";
 import PredictionsTable from "./components/PredictionsTable";
 import TopScorersChart from "./components/TopScorersChart";
 import MatchPredictionsTable from "./components/MatchPredictionsTable";
@@ -14,7 +14,7 @@ const POSITIONS = [
 ];
 
 export default function App() {
-  const [tab, setTab] = useState("fantasy"); // "fantasy" | "matches"
+  const [tab, setTab] = useState("fantasy"); // "fantasy" | "matches" | "myteam"
 
   return (
     <div className="container">
@@ -30,9 +30,14 @@ export default function App() {
         <button className={tab === "matches" ? "tab active" : "tab"} onClick={() => setTab("matches")}>
           Match Predictions
         </button>
+        <button className={tab === "myteam" ? "tab active" : "tab"} onClick={() => setTab("myteam")}>
+          My Team
+        </button>
       </div>
 
-      {tab === "fantasy" ? <FantasyTab /> : <MatchesTab />}
+      {tab === "fantasy" && <FantasyTab />}
+      {tab === "matches" && <MatchesTab />}
+      {tab === "myteam" && <MyTeamTab />}
     </div>
   );
 }
@@ -111,6 +116,8 @@ function MatchesTab() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
   const [historyStatus, setHistoryStatus] = useState(null);
+  const [backtest, setBacktest] = useState(null);
+  const [backtestLoading, setBacktestLoading] = useState(false);
 
   const loadPredictions = useCallback(async () => {
     setLoading(true);
@@ -155,6 +162,18 @@ function MatchesTab() {
     }
   }
 
+  async function handleRunBacktest() {
+    setBacktestLoading(true);
+    try {
+      const result = await getBacktest();
+      setBacktest(result);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBacktestLoading(false);
+    }
+  }
+
   return (
     <>
       <div className="toolbar">
@@ -170,14 +189,111 @@ function MatchesTab() {
       {error && <div className="error-banner">{error}</div>}
 
       <div className="card">
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <h3 style={{ margin: 0 }}>Model accuracy (backtest)</h3>
+          <button onClick={handleRunBacktest} disabled={backtestLoading}>
+            {backtestLoading ? "Running…" : "Run backtest"}
+          </button>
+        </div>
+        {backtest && (
+          backtest.matches_evaluated === 0 ? (
+            <p className="muted-small">{backtest.note}</p>
+          ) : (
+            <div className="backtest-grid">
+              <div><span className="muted-small">Matches evaluated</span><strong>{backtest.matches_evaluated}</strong></div>
+              <div><span className="muted-small">Outcome accuracy</span><strong>{Math.round(backtest.outcome_accuracy * 100)}%</strong></div>
+              <div><span className="muted-small">Goals MAE</span><strong>{backtest.goals_mae.home} / {backtest.goals_mae.away}</strong></div>
+              <div><span className="muted-small">Corners MAE</span><strong>{backtest.corners_mae.home} / {backtest.corners_mae.away}</strong></div>
+              <div><span className="muted-small">Cards MAE</span><strong>{backtest.yellow_cards_mae.home} / {backtest.yellow_cards_mae.away}</strong></div>
+            </div>
+          )
+        )}
+        {!backtest && <p className="muted-small">Runs the model against every historical match already loaded — real accuracy, no need to wait for future gameweeks.</p>}
+      </div>
+
+      <div className="card">
         <h3 style={{ marginTop: 0 }}>Predicted scores, corners &amp; cards</h3>
         <p className="muted-small" style={{ marginTop: -8 }}>
-          Based on each team's historical home/away performance. Predictions marked
-          "Low data" mean fewer than 3 recorded matches for one of the teams — treat
-          those with extra skepticism.
+          Tap a fixture for win/draw/away odds, likely scorelines, form, and head-to-head history.
         </p>
         {loading ? <div className="empty-state">Loading…</div> : <MatchPredictionsTable predictions={predictions} />}
       </div>
+    </>
+  );
+}
+
+function MyTeamTab() {
+  const [entryId, setEntryId] = useState("");
+  const [team, setTeam] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  async function handleLoad(e) {
+    e.preventDefault();
+    if (!entryId) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await getMyTeam(entryId);
+      setTeam(data);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <>
+      <form onSubmit={handleLoad} className="toolbar">
+        <input
+          type="text"
+          placeholder="Your FPL team ID (e.g. 123456)"
+          value={entryId}
+          onChange={(e) => setEntryId(e.target.value)}
+          className="team-id-input"
+        />
+        <button type="submit" className="primary" disabled={loading}>
+          {loading ? "Loading…" : "Load my team"}
+        </button>
+      </form>
+
+      <p className="muted-small">
+        Your team ID is the number in the URL when you view "My Team" on the FPL website
+        (fantasy.premierleague.com/entry/<strong>123456</strong>/event/7).
+      </p>
+
+      {error && <div className="error-banner">{error}</div>}
+
+      {team && (
+        <div className="card">
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+            <h3 style={{ margin: 0 }}>Gameweek {team.gameweek}</h3>
+            <span className="muted-small">Total predicted: <strong>{team.total_predicted_points}</strong> pts</span>
+          </div>
+          <table>
+            <thead>
+              <tr><th>Player</th><th>Team</th><th>Pos</th><th>Predicted</th><th>Effective</th></tr>
+            </thead>
+            <tbody>
+              {team.players.map((p) => (
+                <tr key={p.id}>
+                  <td>{p.player_name} {p.is_captain && <span className="badge trained-model">C</span>}</td>
+                  <td>
+                    <span className="team-cell">
+                      {p.team_crest && <img src={p.team_crest} alt="" className="crest" />}
+                      {p.team}
+                    </span>
+                  </td>
+                  <td><span className={`badge ${p.position}`}>{p.position}</span></td>
+                  <td>{p.predicted_points}</td>
+                  <td><strong>{p.effective_points}</strong></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </>
   );
 }

@@ -1,11 +1,19 @@
 import csv
 import io
+from datetime import datetime
 import requests
 
 from .team_name_map import to_fpl_name
 
 BASE_URL = "https://www.football-data.co.uk/mmz4281"
 TIMEOUT = 15
+
+# football-data.co.uk gives dates as DD/MM/YY (and, in some seasons, DD/MM/YYYY).
+# We normalize to ISO (YYYY-MM-DD) at ingestion time so date strings sort
+# chronologically with a plain string comparison everywhere downstream
+# (head-to-head history, team form, backtesting) — sorting "15/08/24" style
+# strings lexicographically does NOT give chronological order across months.
+_DATE_FORMATS = ("%d/%m/%y", "%d/%m/%Y")
 
 # Optional int fields: older seasons and some rows omit corners/cards data,
 # so we parse defensively rather than assuming every column is always present.
@@ -33,6 +41,19 @@ def fetch_season_csv(season: str = "2425", division: str = "E0") -> str:
         raise MatchDataError(f"Failed to fetch historical match data from {url}: {exc}") from exc
 
 
+def _normalize_date(raw_date: str) -> str:
+    """Converts 'DD/MM/YY' (or 'DD/MM/YYYY') to ISO 'YYYY-MM-DD'. Falls back
+    to the raw string, unchanged, if it doesn't match either known format —
+    better to keep an unsortable-but-present date than drop the row."""
+    raw_date = raw_date.strip()
+    for fmt in _DATE_FORMATS:
+        try:
+            return datetime.strptime(raw_date, fmt).strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+    return raw_date
+
+
 def parse_matches_csv(csv_text: str) -> list[dict]:
     """Parses football-data.co.uk's CSV format into our Match model's fields.
     Skips any row missing a required field (goals or team names) rather than
@@ -45,7 +66,7 @@ def parse_matches_csv(csv_text: str) -> list[dict]:
             home_team = to_fpl_name(row["HomeTeam"].strip())
             away_team = to_fpl_name(row["AwayTeam"].strip())
             match = {
-                "date": row.get("Date", "").strip(),
+                "date": _normalize_date(row.get("Date", "")),
                 "home_team": home_team,
                 "away_team": away_team,
                 "home_goals": int(row["FTHG"]),

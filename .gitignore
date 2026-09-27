@@ -4,6 +4,8 @@ __pycache__/
 .pytest_cache/
 venv/
 *.db
+backend/data/
+backend/models/
 
 # Node
 node_modules/

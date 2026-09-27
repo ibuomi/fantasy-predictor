@@ -13,7 +13,8 @@ def create_app(test_config=None):
     app = Flask(__name__, static_folder=None)  # we serve the frontend manually below
     CORS(app)  # harmless in production; only matters if you run `npm run dev` separately
 
-    default_db_path = os.path.join(base_dir, "..", "fantasy.db")
+    default_db_path = os.path.join(base_dir, "..", "data", "fantasy.db")
+    os.makedirs(os.path.dirname(default_db_path), exist_ok=True)
 
     app.config.from_mapping(
         SQLALCHEMY_DATABASE_URI=f"sqlite:///{default_db_path}",

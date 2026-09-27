@@ -1,0 +1,11 @@
+services:
+  app:
+    build: .
+    ports:
+      - "5000:5000"
+    volumes:
+      - fantasy-data:/app/backend/data   # keeps the SQLite db across container restarts
+    restart: unless-stopped
+
+volumes:
+  fantasy-data:
